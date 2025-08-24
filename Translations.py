@@ -1,44 +1,6 @@
 
 import math
-def read_pbm(filename):
-    with open(filename, 'r') as f:
-        # Helper to skip comment and blank lines
-        def next_non_comment():
-            line = f.readline()
-            while line.startswith('#') or line.strip() == '':
-                line = f.readline()
-            return line.strip()
-
-        # Check for correct magic number
-        magic_number = next_non_comment()
-        if magic_number != 'P1':
-            raise ValueError("Unsupported format: Expected P1 PBM file")
-
-        # Get image dimensions
-        width, height = map(int, next_non_comment().split())
-
-        # Read pixel data
-        pixels = []
-        for line in f:
-            if line.startswith('#') or line.strip() == '':
-                continue
-            pixels.extend(map(int, line.strip().split()))
-
-        if len(pixels) != width * height:
-            raise ValueError("Pixel data does not match width and height")
-
-        # Build 2D matrix
-        matrix = []
-        index = 0
-        for _ in range(height):
-            row = []
-            for _ in range(width):
-                row.append(pixels[index])
-                index += 1
-            matrix.append(row)
-
-        return matrix
-    
+from ppm import read_ppm_as_rows, write_ppm 
 def rotate(matrix, angle=90):
     width= len(matrix[0])
     height = len(matrix)
@@ -55,24 +17,14 @@ def rotate(matrix, angle=90):
     for x in range(height):
         for y in range(width):
             val = matrix[x][y]
-            x_rot = x0 + (x - x0) * math.cos(theta) + (y - y0) * math.sin(theta)
-            y_rot = y0 - (x - x0) * math.sin(theta) + (y - y0) * math.cos(theta)
+            x_rot = x0 + (x - x0) * math.cos(-theta) + (y - y0) * math.sin(-theta)
+            y_rot = y0 - (x - x0) * math.sin(-theta) + (y - y0) * math.cos(-theta)
             x_rot = round(x_rot)
             y_rot = round(y_rot)
             coords_and_values.append((x_rot, y_rot, val))
 
-    # bounding box
-    min_x = min(x for x, y, v in coords_and_values)
-    max_x = max(x for x, y, v in coords_and_values)
-    min_y = min(y for x, y, v in coords_and_values)
-    max_y = max(y for x, y, v in coords_and_values)
-
-    new_height = max_x - min_x + 1
-    new_width = max_y - min_y + 1
-
     # blank matrix and shift all coordinates
-    rotated = [[0 for _ in range(new_width)] for _ in range(new_height)]
-
+    rotated = [[0 for _ in range(width)] for _ in range(height)]
     for x, y, val in coords_and_values:
         #new_x = x - min_x
         #new_y = y - min_y
@@ -82,9 +34,9 @@ def rotate(matrix, angle=90):
     return rotated
 
 
-def grayscale_ave(matrix):
-    height = len(matrix)
-    width = len(matrix[0])
+def grayscale_ave(width, height,matrix):
+    #height = len(matrix)
+    #width = len(matrix[0])
 
     grayscale_matrix = [[0 for _ in range(width)] for _ in range(height)]
 
@@ -105,13 +57,26 @@ def grayscale_luma(matrix):
     for x in range(height):
         for y in range(width):
             r, g, b = matrix[x][y]
-            gray = 0,3*r + 0.59*g + 0,11*b
+            gray = int(0.3*r + 0.59*g + 0.11*b)
+            grayscale_matrix[x][y] = (gray, gray, gray)
+
+    return grayscale_matrix
+def greyscale_single_channel(width, height,matrix):
+    #height = len(matrix)
+    #width = len(matrix[0])
+
+    grayscale_matrix = [[0 for _ in range(width)] for _ in range(height)]
+
+    for x in range(height):
+        for y in range(width):
+            r, g, b = matrix[x][y]
+            gray = g  # Assuming we want to use the red channel for grayscale
+            # Alternatively, you can use g or b if you prefer
             grayscale_matrix[x][y] = (gray, gray, gray)
 
     return grayscale_matrix
 
-
-def scale(matrix, factor):
+def Nearest_neighbour_scale(matrix, factor):
     height = len(matrix)
     width = len(matrix[0])
 
@@ -124,26 +89,62 @@ def scale(matrix, factor):
         for y in range(scaled_width):
             orig_x = int(x / factor)
             orig_y = int(y / factor)
-            if orig_x < height and orig_y < width:
-                scaled_matrix[x][y] = matrix[orig_x][orig_y]
+            
+            scaled_matrix[x][y] = matrix[orig_x][orig_y]
 
     return scaled_matrix
-    
-def write_pbm_2d(filename, matrix, comment=None):
+
+def interpolate_scale(matrix, factor):
     height = len(matrix)
-    width = len(matrix[0]) if height > 0 else 0
+    width = len(matrix[0])
+    scaled_height = int(height * factor)
+    scaled_width = int(width * factor)
+    
+    # Initialize scaled matrix
+    scaled_matrix = [[0 for _ in range(scaled_width)] for _ in range(scaled_height)]
+    
+    for i in range(scaled_height):
+        for j in range(scaled_width):
+            # Map scaled coordinates back to original coordinates
+            x = i / factor
+            y = j / factor
+            
+            # Get the four surrounding pixels in original matrix
+            x1 = int(x)
+            y1 = int(y)
+            x2 = min(x1 + 1, height - 1)
+            y2 = min(y1 + 1, width - 1)
+            
+            # Calculate interpolation weights
+            dx = x - x1
+            dy = y - y1
+            
+            # Get pixel values (handle edge cases)
+            p11 = matrix[x1][y1]  # top-left
+            p12 = matrix[x1][y2]  # top-right
+            p21 = matrix[x2][y1]  # bottom-left
+            p22 = matrix[x2][y2]  # bottom-right
+            
+            # Bilinear interpolation for each color channel
+            interpolated_pixel = []
+            for channel in range(3):  # r, g, b
+                # Interpolate top row
+                top = p11[channel] * (1 - dy) + p12[channel] * dy
+                # Interpolate bottom row
+                bottom = p21[channel] * (1 - dy) + p22[channel] * dy
+                # Final interpolation
+                value = top * (1 - dx) + bottom * dx
+                interpolated_pixel.append(int(round(value)))
+            
+            scaled_matrix[i][j] = tuple(interpolated_pixel)
+    
+    return scaled_matrix
+width, height, max_val, image =read_ppm_as_rows("C:/Users/bonga/OneDrive/Documents/imageprocessing/color.ppm")
+#print(width, height, max_val, image)
 
-    with open(filename, 'w') as f:
-        f.write("P1\n")
-        if comment:
-            f.write(f"# {comment}\n")
-        f.write(f"{width} {height}\n")
-        for row in matrix:
-            f.write(' '.join(map(str, row)) + '\n')
-
-
-print(read_pbm('C:/Users/bonga/Downloads/j.pbm'))  # Replace 'example.ppm' with your PPM file path
-print('\n')
-print(rotate(read_pbm('C:/Users/bonga/Downloads/j.pbm'), angle=90))
-
-write_pbm_2d('C:/Users/bonga/Downloads/j_rotated.pbm', rotate(read_pbm('C:/Users/bonga/Downloads/j.pbm'), angle=30), comment='Rotated by 30 degrees')
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorgrey.ppm",grayscale_ave(width, height, image),max_val)
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorgreyluma.ppm",grayscale_luma(image),max_val)
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorgreysingle.ppm",greyscale_single_channel(width, height, image),max_val)
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorscaled.ppm",Nearest_neighbour_scale(image,5),max_val)
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorscaledinterpolate.ppm",interpolate_scale(image,2),max_val)
+write_ppm("C:/Users/bonga/OneDrive/Documents/imageprocessing/colorrotated.ppm",rotate(image, 22.5),max_val)
